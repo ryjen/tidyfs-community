@@ -1,0 +1,163 @@
+name: Promote canonical release
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type PROMOTE v0.7.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-v0.7.0
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: ${{ github.event.inputs.confirmation == 'PROMOTE v0.7.0' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CANONICAL_REPO: ryjen/tidyfs
+      TAG: v0.7.0
+      VERSION: 0.7.0
+      CANONICAL_COMMIT: 4ce8406a903ded92fcc3126933ac64aab700d626
+      TARGET: x86_64-unknown-linux-musl
+      ARTIFACT: tidyfs-0.7.0-x86_64-unknown-linux-musl.tar.gz
+      EXPECTED_SHA256: fe818f3e609185e8af9dc9fd21f41e132fd42907168255c146c21dd73cd60bf9
+    steps:
+      - name: Checkout distribution metadata
+        uses: actions/checkout@v4
+
+      - name: Verify committed release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('release.json').read_text())
+          expected = {
+              'version': '0.7.0',
+              'canonical_repository': 'ryjen/tidyfs',
+              'canonical_tag': 'v0.7.0',
+              'canonical_commit': '4ce8406a903ded92fcc3126933ac64aab700d626',
+              'target': 'x86_64-unknown-linux-musl',
+              'artifact': 'tidyfs-0.7.0-x86_64-unknown-linux-musl.tar.gz',
+              'sha256': 'fe818f3e609185e8af9dc9fd21f41e132fd42907168255c146c21dd73cd60bf9',
+              'source_url': 'https://github.com/ryjen/tidyfs-community/releases/download/v0.7.0/tidyfs-0.7.0-x86_64-unknown-linux-musl.tar.gz',
+          }
+          for key, value in expected.items():
+              if data.get(key) != value:
+                  raise SystemExit(f'release.json mismatch for {key}: {data.get(key)!r} != {value!r}')
+          PY
+
+      - name: Verify immutable canonical source
+        shell: bash
+        run: |
+          set -euo pipefail
+          canonical_release="$(gh api "repos/${CANONICAL_REPO}/releases/tags/${TAG}")"
+          python3 - "$canonical_release" <<'PY'
+          import json, os, sys
+          release = json.loads(sys.argv[1])
+          if release.get('immutable') is not True:
+              raise SystemExit('canonical release is not immutable')
+          expected_name = os.environ['ARTIFACT']
+          expected_digest = 'sha256:' + os.environ['EXPECTED_SHA256']
+          assets = {a['name']: a for a in release.get('assets', [])}
+          asset = assets.get(expected_name)
+          if not asset:
+              raise SystemExit(f'missing canonical asset {expected_name}')
+          if asset.get('digest') != expected_digest:
+              raise SystemExit(f'canonical asset digest mismatch: {asset.get("digest")}')
+          PY
+
+          tag_object="$(gh api "repos/${CANONICAL_REPO}/git/ref/tags/${TAG}" --jq '.object.sha')"
+          tagged_commit="$(gh api "repos/${CANONICAL_REPO}/git/tags/${tag_object}" --jq '.object.sha')"
+          test "$tagged_commit" = "$CANONICAL_COMMIT"
+
+      - name: Download and verify canonical bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/${CANONICAL_REPO}/releases/download/${TAG}"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 5 \
+            --output "$ARTIFACT" "$base/$ARTIFACT"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 5 \
+            --output "$ARTIFACT.sha256" "$base/$ARTIFACT.sha256"
+
+          computed="$(sha256sum "$ARTIFACT" | awk '{print $1}')"
+          test "$computed" = "$EXPECTED_SHA256"
+          grep -Fx "$EXPECTED_SHA256  $ARTIFACT" "$ARTIFACT.sha256"
+
+      - name: Reuse an already-correct community release
+        id: existing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            mkdir -p existing
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$ARTIFACT" --dir existing
+            computed="$(sha256sum "existing/$ARTIFACT" | awk '{print $1}')"
+            test "$computed" = "$EXPECTED_SHA256"
+            immutable="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.immutable')"
+            test "$immutable" = true
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'present=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create draft community release with exact bytes
+        if: steps.existing.outputs.present != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --draft \
+            --title "tidyfs ${VERSION}" \
+            --notes "Binary-only public distribution mirror of immutable canonical ${CANONICAL_REPO}@${TAG} (${CANONICAL_COMMIT}). The archive is promoted byte-for-byte; SHA-256: ${EXPECTED_SHA256}." \
+            "$ARTIFACT" "$ARTIFACT.sha256"
+
+      - name: Verify draft handoff and publish
+        if: steps.existing.outputs.present != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf draft
+          mkdir draft
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ARTIFACT" --dir draft
+          computed="$(sha256sum "draft/$ARTIFACT" | awk '{print $1}')"
+          test "$computed" = "$EXPECTED_SHA256"
+
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+          immutable="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.immutable')"
+          if [[ "$immutable" != true ]]; then
+            echo 'community release immutability is not enabled; rolling back mutable publication' >&2
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            exit 1
+          fi
+
+      - name: Verify public community copy byte-for-byte
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf public-copy
+          mkdir public-copy
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 5 \
+            --output "public-copy/$ARTIFACT" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ARTIFACT}"
+          computed="$(sha256sum "public-copy/$ARTIFACT" | awk '{print $1}')"
+          test "$computed" = "$EXPECTED_SHA256"
+
+          api_digest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            --jq ".assets[] | select(.name == \"${ARTIFACT}\") | .digest")"
+          test "$api_digest" = "sha256:$EXPECTED_SHA256"
