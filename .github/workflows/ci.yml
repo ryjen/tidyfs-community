@@ -88,7 +88,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          drv="$(nix derivation show .#tidyfs)"
+          drv="$(nix derivation show -r .#tidyfs)"
           printf '%s' "$drv" | grep -F 'github.com/ryjen/tidyfs-community/releases/download/' >/dev/null
           if printf '%s' "$drv" | grep -F 'github.com/ryjen/tidyfs/releases/download/' >/dev/null; then
             echo 'canonical release URL leaked into public package derivation' >&2
