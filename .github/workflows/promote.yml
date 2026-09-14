@@ -9,6 +9,7 @@ on:
         type: string
 
 permissions:
+  actions: write
   contents: write
 
 concurrency:
@@ -30,7 +31,7 @@ jobs:
       EXPECTED_SHA256: fe818f3e609185e8af9dc9fd21f41e132fd42907168255c146c21dd73cd60bf9
     steps:
       - name: Checkout distribution metadata
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Verify committed release identity
         shell: bash
@@ -161,3 +162,7 @@ jobs:
           api_digest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
             --jq ".assets[] | select(.name == \"${ARTIFACT}\") | .digest")"
           test "$api_digest" = "sha256:$EXPECTED_SHA256"
+
+      - name: Dispatch public consumer qualification
+        shell: bash
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
