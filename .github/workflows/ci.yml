@@ -56,7 +56,7 @@ jobs:
               raise SystemExit(f'nix_hash mismatch: {data.get("nix_hash")!r} != {sri!r}')
           PY
 
-      - name: Verify public release bytes directly
+      - name: Verify public release bytes and archive modes directly
         shell: bash
         run: |
           set -euo pipefail
@@ -66,6 +66,14 @@ jobs:
           curl --fail --location --proto '=https' --tlsv1.2 --retry 5 --output "$artifact" "$url"
           computed="$(sha256sum "$artifact" | awk '{print $1}')"
           test "$computed" = "$expected"
+
+          root="${artifact%.tar.gz}"
+          mkdir extracted
+          tar -xzf "$artifact" -C extracted
+          test -x "extracted/$root/bin/tidyfs"
+          test -r "extracted/$root/share/man/man1/tidyfs.1"
+          test "$(stat -c '%a' "extracted/$root/bin/tidyfs")" = 755
+          test "$(stat -c '%a' "extracted/$root/share/man/man1/tidyfs.1")" = 644
 
       - name: Check flake without rewriting lock state
         run: nix flake check --no-write-lock-file --print-build-logs
@@ -81,9 +89,7 @@ jobs:
           nix run .# -- --help >/dev/null
           out="$(nix build .#tidyfs --no-link --print-out-paths)"
           test -x "$out/bin/tidyfs"
-          test -r "$out/share/man/man1/tidyfs.1"
-          test "$(stat -c '%a' "$out/bin/tidyfs")" = 755
-          test "$(stat -c '%a' "$out/share/man/man1/tidyfs.1")" = 644
+          test -n "$(find "$out/share/man/man1" -maxdepth 1 -type f -name 'tidyfs.1*' -print -quit)"
           nix shell nixpkgs#man-db --command bash -c 'MANPATH="$1/share/man" man -w tidyfs >/dev/null' _ "$out"
 
       - name: Prove build fetches only community release bytes
