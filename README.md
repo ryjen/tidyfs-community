@@ -1,28 +1,29 @@
-# tidyfs-community
+# tidyfs-community (deprecated)
 
-Public binary distribution surface for [tidyfs](https://github.com/ryjen/tidyfs).
+This repository is retained only as a compatibility surface for existing pinned consumers and the historical immutable `v0.7.0` release.
 
-This repository contains packaging metadata and public release artifacts only. It does **not** rebuild tidyfs or mirror its implementation source. The canonical `ryjen/tidyfs` repository remains the source, build, test, and release authority.
+Active tidyfs source, release, and binary-distribution work now lives in the public canonical repository:
 
-## Current release
+- source and release authority: `ryjen/tidyfs`
+- binary-oriented Nix flake: `distribution/`
+- merged cutover commit: `8beca6cbcd9c732a712777a59a4dd46ae703906d`
 
-- version: `0.7.0`
+New consumers should pin an exact reviewed `tidyfs` commit and select the distribution subflake:
+
+```nix
+tidyfs.url = "github:ryjen/tidyfs/8beca6cbcd9c732a712777a59a4dd46ae703906d?dir=distribution";
+```
+
+The historical files and release assets here are intentionally retained so existing locks such as `b6690394c15d4e666b26885d922414527e5c7d68` continue to resolve. No new releases should be promoted from this repository.
+
+## Historical v0.7.0 identity
+
+- canonical repository: `ryjen/tidyfs`
 - canonical tag: `v0.7.0`
 - canonical commit: `4ce8406a903ded92fcc3126933ac64aab700d626`
 - target: `x86_64-unknown-linux-musl`
-- archive: `tidyfs-0.7.0-x86_64-unknown-linux-musl.tar.gz`
-- SHA-256: `fe818f3e609185e8af9dc9fd21f41e132fd42907168255c146c21dd73cd60bf9`
+- archive SHA-256: `fe818f3e609185e8af9dc9fd21f41e132fd42907168255c146c21dd73cd60bf9`
 
-`release.json` is the machine-readable distribution identity. The community release asset must be byte-identical to the immutable canonical release asset. Nix consumption is pinned by cryptographic hash and must not require access to the canonical repository.
+## Status
 
-## Trust boundary
-
-- this repository owns public packaging/distribution metadata, not product-version authority;
-- release bytes are promoted without rebuilding or repacking;
-- SHA-256 pinning proves byte identity/integrity, not reproducible-build or SLSA provenance;
-- distributed binaries are assumed reverse engineerable and contain no secrets or hidden authorization material;
-- rollback means pinning an earlier reviewed community packaging commit/release, never mutating an existing release identity.
-
-## License
-
-Apache-2.0 OR MIT, matching tidyfs.
+Deprecated. Prefer `ryjen/tidyfs`. This repository may be archived once downstream references have been migrated; it should not be deleted while historical pinned consumers still depend on it.
